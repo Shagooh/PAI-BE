@@ -3,7 +3,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import htmlToDocx from 'html-to-docx';
 import { pool } from '../db.js';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -13,6 +13,45 @@ const __dirname = dirname(__filename);
 const router = Router();
 
 const escapeHtml = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+
+const loadPciTemplateHtml = () => {
+  const templateCandidates = [
+    join(__dirname, '..', 'PCI', 'PCI05062026prueba.html'),
+    join(process.cwd(), 'PCI', 'PCI05062026prueba.html'),
+  ];
+
+  const templatePath = templateCandidates.find((p) => existsSync(p));
+  if (!templatePath) {
+    return null;
+  }
+
+  let html = readFileSync(templatePath, 'utf-8');
+  const templateRoot = dirname(templatePath);
+  const img1Path = join(templateRoot, 'images', 'image1.png');
+  const img2Path = join(templateRoot, 'images', 'image2.png');
+
+  if (existsSync(img1Path)) {
+    const img1Base64 = readFileSync(img1Path).toString('base64');
+    html = html.replace('images/image1.png', `data:image/png;base64,${img1Base64}`);
+  }
+
+  if (existsSync(img2Path)) {
+    const img2Base64 = readFileSync(img2Path).toString('base64');
+    html = html.replace('images/image2.png', `data:image/png;base64,${img2Base64}`);
+  }
+
+  return html;
+};
+
+const buildFallbackPageHtml = (nombre, edad, metaText, fechaStr) => `
+  <div style="font-family:Arial,sans-serif; padding:32px; border:1px solid #ddd; border-radius:10px; margin-bottom:20px;">
+    <h2 style="margin:0 0 12px; color:#1a237e;">Ficha de Usuario</h2>
+    <p style="margin:0 0 8px;"><strong>Nombre:</strong> ${escapeHtml(nombre)}</p>
+    <p style="margin:0 0 8px;"><strong>Edad:</strong> ${escapeHtml(String(edad))}</p>
+    <p style="margin:0 0 8px;"><strong>Meta:</strong> ${metaText || '-'}</p>
+    <p style="margin:16px 0 0; font-size:12px; color:#666;">Generado el ${escapeHtml(fechaStr)}</p>
+  </div>
+`;
 
 router.get('/', async (req, res) => {
   try {
@@ -262,54 +301,51 @@ router.get('/word', async (req, res) => {
     userQuery += ' ORDER BY u.rut';
     const users = await pool.query(userQuery, params);
 
-    const templatePath = join(__dirname, '..', '..', 'PCI', 'PCI05062026prueba.html');
-    const img1Path = join(__dirname, '..', '..', 'PCI', 'images', 'image1.png');
-    const img2Path = join(__dirname, '..', '..', 'PCI', 'images', 'image2.png');
+    const html = loadPciTemplateHtml();
 
-    let html = readFileSync(templatePath, 'utf-8');
-    const img1Base64 = readFileSync(img1Path).toString('base64');
-    const img2Base64 = readFileSync(img2Path).toString('base64');
-
-    html = html.replace('images/image1.png', `data:image/png;base64,${img1Base64}`);
-    html = html.replace('images/image2.png', `data:image/png;base64,${img2Base64}`);
-
-    const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    const bodyMatch = html?.match(/<body[^>]*>([\s\S]*)<\/body>/i);
     const bodyContent = bodyMatch ? bodyMatch[1] : '';
-    const styleTag = html.match(/<style[^>]*>[\s\S]*?<\/style>/i)?.[0] || '';
+    const styleTag = html?.match(/<style[^>]*>[\s\S]*?<\/style>/i)?.[0] || '';
 
     const metaText = req.query.meta ? escapeHtml(req.query.meta) : '';
     const now = new Date();
     const fechaStr = now.toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' });
 
+    const fallbackPages = users.rows.map((u) =>
+      `<div style="page-break-after:always;">${buildFallbackPageHtml(`${u.nombre} ${u.apellido}`, u.edad, metaText, fechaStr)}</div>`
+    ).join('\n');
+
     const docxBuffer = await htmlToDocx(
-      `<html><head>${styleTag}</head><body class="c17 doc-content">
-        ${users.rows.map((u) => {
-          const nombre = `${u.nombre} ${u.apellido}`;
-          const edad = String(u.edad);
-          let page = bodyContent
-            .replace(/<p class="c0 c5"><span class="c7"><\/span><\/p>/g, '')
-            .replace(/(?:<p class="c0 c5"><span class="c1"><\/span><\/p>){6}/, '')
-            .replace(
-              /<td class="c15" colspan="1" rowspan="1">/,
-              `<td colspan="6" style="width:540pt;border-right-style:solid;padding:5pt;border-color:#000000;border-width:1pt;border-top-style:solid;border-left-style:solid;border-bottom-style:solid;vertical-align:top;"><p class="c0"><span class="c1">${metaText}</span></p>`
-            )
-            .replace(
-              /(<td class="c2" colspan="1" rowspan="1">)(<p class="c0 c5"><span class="c1"><\/span><\/p>)(<\/td>)/,
-              `$1<p class="c0"><span class="c1">${nombre}</span></p>$3`
-            )
-            .replace(
-              /(<span class="c11">Edad:<\/span>)(<\/p>)/,
-              `$1 ${edad}$2`
-            );
-          return `
-          <div style="page-break-after:always;">
-            ${page}
-            <p style="text-align:center;margin-top:20px;font-size:9pt;color:#888;font-family:Candara;">
-              Generado el ${fechaStr}
-            </p>
-          </div>`;
-        }).join('\n')}
-      </body></html>`,
+      html
+        ? `<html><head>${styleTag}</head><body class="c17 doc-content">
+          ${users.rows.map((u) => {
+            const nombre = `${u.nombre} ${u.apellido}`;
+            const edad = String(u.edad);
+            let page = bodyContent
+              .replace(/<p class="c0 c5"><span class="c7"><\/span><\/p>/g, '')
+              .replace(/(?:<p class="c0 c5"><span class="c1"><\/span><\/p>){6}/, '')
+              .replace(
+                /<td class="c15" colspan="1" rowspan="1">/,
+                `<td colspan="6" style="width:540pt;border-right-style:solid;padding:5pt;border-color:#000000;border-width:1pt;border-top-style:solid;border-left-style:solid;border-bottom-style:solid;vertical-align:top;"><p class="c0"><span class="c1">${metaText}</span></p>`
+              )
+              .replace(
+                /(<td class="c2" colspan="1" rowspan="1">)(<p class="c0 c5"><span class="c1"><\/span><\/p>)(<\/td>)/,
+                `$1<p class="c0"><span class="c1">${nombre}</span></p>$3`
+              )
+              .replace(
+                /(<span class="c11">Edad:<\/span>)(<\/p>)/,
+                `$1 ${edad}$2`
+              );
+            return `
+            <div style="page-break-after:always;">
+              ${page}
+              <p style="text-align:center;margin-top:20px;font-size:9pt;color:#888;font-family:Candara;">
+                Generado el ${fechaStr}
+              </p>
+            </div>`;
+          }).join('\n')}
+        </body></html>`
+        : `<html><head></head><body>${fallbackPages}</body></html>`,
       null,
       { table: { row: { cantSplit: true } } }
     );
@@ -342,16 +378,21 @@ router.get('/preview', async (req, res) => {
     userQuery += ' ORDER BY u.rut';
     const users = await pool.query(userQuery, params);
 
-    const templatePath = join(__dirname, '..', '..', 'PCI', 'PCI05062026prueba.html');
-    const img1Path = join(__dirname, '..', '..', 'PCI', 'images', 'image1.png');
-    const img2Path = join(__dirname, '..', '..', 'PCI', 'images', 'image2.png');
+    const html = loadPciTemplateHtml();
 
-    let html = readFileSync(templatePath, 'utf-8');
-    const img1Base64 = readFileSync(img1Path).toString('base64');
-    const img2Base64 = readFileSync(img2Path).toString('base64');
+    if (!html) {
+      const now = new Date();
+      const fechaStr = now.toLocaleDateString('es-AR', { year: 'numeric', month: 'long', day: 'numeric' });
+      const metaText = req.query.meta ? escapeHtml(req.query.meta) : '';
+      const userPages = users.rows.map((u, idx) => {
+        const sep = idx < users.rows.length - 1 ? ' style="page-break-after:always;"' : '';
+        return `<div${sep}>${buildFallbackPageHtml(`${u.nombre} ${u.apellido}`, u.edad, metaText, fechaStr)}</div>`;
+      }).join('\n');
 
-    html = html.replace('images/image1.png', `data:image/png;base64,${img1Base64}`);
-    html = html.replace('images/image2.png', `data:image/png;base64,${img2Base64}`);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview usuarios</title></head><body>${userPages}</body></html>`);
+      return;
+    }
 
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
     const bodyContent = bodyMatch ? bodyMatch[1] : '';
