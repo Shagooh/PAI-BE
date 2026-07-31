@@ -1,0 +1,23 @@
+[
+	{
+		"nombre": "Menor de edad",
+		"edad_min": 0,
+		"edad_max": 17,
+		"resultado": "No esta habilitado",
+		"descripcion": "Personas que no han alcanzado la mayoria de edad"
+	},
+	{
+		"nombre": "Mayor de edad",
+		"edad_min": 18,
+		"edad_max": 999,
+		"resultado": "Esta habilitado",
+		"descripcion": "Personas que han alcanzado la mayoria de edad"
+	},
+	{
+		"nombre": "Adulto mayor",
+		"edad_min": 65,
+		"edad_max": 999,
+		"resultado": "Esta habilitado",
+		"descripcion": "Personas que han alcanzado la edad de jubilacion"
+	}
+]
