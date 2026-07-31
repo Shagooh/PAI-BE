@@ -16,8 +16,8 @@ const escapeHtml = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/
 
 const loadPciTemplateHtml = () => {
   const templateCandidates = [
-    join(__dirname, '..', 'PCI', 'PCI05062026prueba.html'),
     join(process.cwd(), 'PCI', 'PCI05062026prueba.html'),
+    join(__dirname, '..', 'PCI', 'PCI05062026prueba.html'),
   ];
 
   const templatePath = templateCandidates.find((p) => existsSync(p));
