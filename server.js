@@ -5,7 +5,7 @@ import usuariosRouter from './routes/usuarios.js';
 import habilitacionesRouter from './routes/habilitaciones.js';
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
@@ -14,6 +14,10 @@ app.use('/api/usuarios', usuariosRouter);
 app.use('/api/habilitaciones', habilitacionesRouter);
 
 app.listen(PORT, async () => {
-  await initDB();
+  try {
+    await initDB();
+  } catch (err) {
+    console.error('Error al inicializar la base de datos:', err.message);
+  }
   console.log(`Servidor en http://localhost:${PORT}`);
 });

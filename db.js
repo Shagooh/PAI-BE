@@ -1,21 +1,37 @@
+import 'dotenv/config';
 import pkg from 'pg';
 const { Pool } = pkg;
 
-const pool = new Pool({
-  host: 'localhost',
-  port: 5432,
-  database: 'crud_db',
-  user: 'postgres',
-  password: 'admin',
-});
+const connectionString = process.env.SUPABASE_DB_POOLER_URL || process.env.DATABASE_URL;
+const useSsl = Boolean(connectionString) && process.env.PGSSLMODE !== 'disable';
+
+const pool = new Pool(
+  connectionString
+    ? {
+        connectionString,
+        ssl: useSsl ? { rejectUnauthorized: false } : false,
+      }
+    : {
+        host: 'localhost',
+        port: 5432,
+        database: 'crud_db',
+        user: 'postgres',
+        password: 'admin',
+      }
+);
 
 const initDB = async () => {
+  if (process.env.RUN_DB_INIT !== 'true') {
+    console.log('RUN_DB_INIT no esta en true, se omite inicializacion de BD.');
+    return;
+  }
+
   const client = await pool.connect();
   try {
-    await client.query(`DROP TABLE IF EXISTS items CASCADE`);
-    await client.query(`DROP TABLE IF EXISTS usuarios CASCADE`);
+    await client.query('BEGIN');
+
     await client.query(`
-      CREATE TABLE usuarios (
+      CREATE TABLE IF NOT EXISTS usuarios (
         rut VARCHAR(12) PRIMARY KEY,
         nombre VARCHAR(100) NOT NULL,
         apellido VARCHAR(100) NOT NULL,
@@ -27,9 +43,8 @@ const initDB = async () => {
       );
     `);
 
-    await client.query(`DROP TABLE IF EXISTS habilitaciones`);
     await client.query(`
-      CREATE TABLE habilitaciones (
+      CREATE TABLE IF NOT EXISTS habilitaciones (
         id SERIAL PRIMARY KEY,
         nombre VARCHAR(50) NOT NULL,
         edad_min INT NOT NULL,
@@ -40,15 +55,28 @@ const initDB = async () => {
     `);
 
     await client.query(`
-      INSERT INTO habilitaciones (nombre, edad_min, edad_max, resultado, descripcion) VALUES
-      ('Menor de edad', 0, 17, 'No esta habilitado', 'Personas que no han alcanzado la mayoria de edad'),
-      ('Mayor de edad', 18, 999, 'Esta habilitado', 'Personas que han alcanzado la mayoria de edad');
+      CREATE TABLE IF NOT EXISTS items (
+        id SERIAL PRIMARY KEY,
+        nombre VARCHAR(120) NOT NULL,
+        descripcion TEXT,
+        precio NUMERIC(12,2) DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
-    console.log('Seed de habilitaciones insertado');
+
+    const habCount = await client.query('SELECT COUNT(*)::int AS count FROM habilitaciones');
+    if (habCount.rows[0].count === 0) {
+      await client.query(`
+        INSERT INTO habilitaciones (nombre, edad_min, edad_max, resultado, descripcion) VALUES
+        ('Menor de edad', 0, 17, 'No esta habilitado', 'Personas que no han alcanzado la mayoria de edad'),
+        ('Mayor de edad', 18, 999, 'Esta habilitado', 'Personas que han alcanzado la mayoria de edad');
+      `);
+      console.log('Seed de habilitaciones insertado');
+    }
     console.log('Tabla habilitaciones lista');
 
-    const { rowCount } = await client.query('SELECT COUNT(*) FROM usuarios');
-    if (parseInt(rowCount) === 0) {
+    const usersCount = await client.query('SELECT COUNT(*)::int AS count FROM usuarios');
+    if (usersCount.rows[0].count === 0) {
       await client.query(`
         INSERT INTO usuarios (rut, nombre, apellido, edad) VALUES
         ('18.768.749-7', 'Lautaro', 'Garcia', 25),
@@ -65,6 +93,11 @@ const initDB = async () => {
       console.log('Seed de 10 usuarios insertado');
     }
     console.log('Tabla usuarios lista');
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
   } finally {
     client.release();
   }
