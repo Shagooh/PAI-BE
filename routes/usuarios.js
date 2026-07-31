@@ -14,6 +14,13 @@ const router = Router();
 
 const escapeHtml = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
 
+const summarizeTemplateImages = (html) => ({
+  imgTags: (html.match(/<img\b/gi) || []).length,
+  dataPngUris: (html.match(/data:image\/png;base64,/gi) || []).length,
+  remainingImage1: (html.match(/images\/image1\.png/gi) || []).length,
+  remainingImage2: (html.match(/images\/image2\.png/gi) || []).length,
+});
+
 const loadPciTemplateHtml = () => {
   const templateCandidates = [
     join(process.cwd(), 'PCI', 'PCI05062026prueba.html'),
@@ -30,15 +37,21 @@ const loadPciTemplateHtml = () => {
   const img1Path = join(templateRoot, 'images', 'image1.png');
   const img2Path = join(templateRoot, 'images', 'image2.png');
 
+  console.log('[TEMPLATE] path:', templatePath);
+  console.log('[TEMPLATE] image1 exists:', existsSync(img1Path), '| image2 exists:', existsSync(img2Path));
+
   if (existsSync(img1Path)) {
     const img1Base64 = readFileSync(img1Path).toString('base64');
-    html = html.replace('images/image1.png', `data:image/png;base64,${img1Base64}`);
+    html = html.replace(/(?:\.\/)?images\/image1\.png/gi, `data:image/png;base64,${img1Base64}`);
   }
 
   if (existsSync(img2Path)) {
     const img2Base64 = readFileSync(img2Path).toString('base64');
-    html = html.replace('images/image2.png', `data:image/png;base64,${img2Base64}`);
+    html = html.replace(/(?:\.\/)?images\/image2\.png/gi, `data:image/png;base64,${img2Base64}`);
   }
+
+  const summary = summarizeTemplateImages(html);
+  console.log('[TEMPLATE] img summary after embed:', summary);
 
   return html;
 };
@@ -393,6 +406,8 @@ router.get('/preview', async (req, res) => {
       res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview usuarios</title></head><body>${userPages}</body></html>`);
       return;
     }
+
+    console.log('[PREVIEW] template image summary:', summarizeTemplateImages(html));
 
     const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
     const bodyContent = bodyMatch ? bodyMatch[1] : '';
