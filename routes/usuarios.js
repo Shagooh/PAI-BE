@@ -343,13 +343,13 @@ router.post('/word', async (req, res) => {
     const { ids = [], meta = '', usuarios = [], decisiones = [] } = req.body || {};
 
     const docxTemplateCandidates = [
-      join(process.cwd(), 'PCI - 22_07_2026.docx'),
-      join(__dirname, '..', 'PCI - 22_07_2026.docx'),
+      join(process.cwd(), 'Template_word_PCI.docx'),
+      join(__dirname, '..', 'Template_word_PCI.docx'),
     ];
     const docxTemplatePath = docxTemplateCandidates.find((p) => existsSync(p));
 
     if (!docxTemplatePath) {
-      return res.status(500).json({ error: 'No se encontró el archivo PCI - 22_07_2026.docx en el proyecto.' });
+      return res.status(500).json({ error: 'No se encontró el template de Word (Template_word_PCI.docx) en el proyecto.' });
     }
 
     const requestedIds = Array.isArray(ids)
