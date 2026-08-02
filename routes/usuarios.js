@@ -3,6 +3,7 @@ import { pool } from '../db.js';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import HTMLtoDOCX from 'html-to-docx';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -17,6 +18,69 @@ const summarizeTemplateImages = (html) => ({
   remainingImage1: (html.match(/images\/image1\.png/gi) || []).length,
   remainingImage2: (html.match(/images\/image2\.png/gi) || []).length,
 });
+
+const sanitizeText = (value) => escapeHtml(value == null ? '' : String(value));
+
+const compactText = (value) => sanitizeText(value).replace(/\r?\n+/g, ' ').trim();
+
+const toCellParagraph = (value) => `<p class="c0"><span class="c1">${compactText(value)}</span></p>`;
+
+const createDecisionRowHtml = (decision = {}) => {
+  const columns = [
+    decision.dimension,
+    decision.objetivo,
+    decision.estrategia,
+    decision.indicador,
+    decision.plazo,
+    decision.responsable,
+    decision.evaluacion,
+  ];
+
+  const cells = columns
+    .map((value) => `<td class="c2" colspan="1" rowspan="1">${toCellParagraph(value)}</td>`)
+    .join('');
+
+  return `<tr class="c3">${cells}</tr>`;
+};
+
+const replaceLabelValueCell = (html, label, value) => {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(
+    `(<span class="c11">${escapedLabel}<\\/span><\\/p><\\/td><td class="c2" colspan="1" rowspan="1">)([\\s\\S]*?)(<\\/td>)`
+  );
+  return html.replace(regex, `$1${toCellParagraph(value)}$3`);
+};
+
+const replaceDecisionRows = (html, decisiones = []) => {
+  const rowsHtml = (Array.isArray(decisiones) && decisiones.length > 0)
+    ? decisiones.map((decision) => createDecisionRowHtml(decision)).join('')
+    : createDecisionRowHtml({});
+
+  return html.replace(
+    /(<tr class="c3"><td class="c2 c6" colspan="1" rowspan="1"><p class="c0"><span class="c11">DIMENSI&Oacute;N<\/span><\/p><\/td>[\s\S]*?<span class="c11">EVALUACI&Oacute;N<\/span><\/p><\/td><\/tr>)[\s\S]*?(<\/table>)/,
+    `$1${rowsHtml}$2`
+  );
+};
+
+const buildUserPageFromTemplate = (templateBody, user = {}, meta = '', decisiones = []) => {
+  const fullName = [user.nombre, user.apellido].filter(Boolean).join(' ').trim();
+
+  let page = templateBody;
+  page = page.replace(/<p class="c0 c5"><span class="c7"><\/span><\/p>/g, '');
+  page = page.replace(
+    /<td class="c15" colspan="1" rowspan="1">[\s\S]*?<\/td>/,
+    `<td class="c15" colspan="1" rowspan="1">${toCellParagraph(meta)}</td>`
+  );
+  page = replaceLabelValueCell(page, 'Nombre:', fullName || user.nombre || '');
+  page = replaceLabelValueCell(page, 'RUT:', user.rut || '');
+  page = page.replace(
+    /(<span class="c11">Edad:<\/span>)(<\/p>)/,
+    `$1 ${compactText(user.edad)}$2`
+  );
+  page = replaceDecisionRows(page, decisiones);
+
+  return page;
+};
 
 const loadPciTemplateHtml = () => {
   const templateCandidates = [
@@ -195,6 +259,84 @@ router.get('/:rut', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/word', async (req, res) => {
+  try {
+    const { ids = [], meta = '', usuarios = [], decisiones = [] } = req.body || {};
+
+    const templateHtml = loadPciTemplateHtml();
+    if (!templateHtml) {
+      return res.status(500).json({ error: 'No se encontró el template PCI para generar el documento.' });
+    }
+
+    const bodyMatch = templateHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+    const bodyContent = bodyMatch ? bodyMatch[1] : '';
+    const styleTag = templateHtml.match(/<style[^>]*>[\s\S]*?<\/style>/i)?.[0] || '';
+    const headContent = templateHtml.match(/<head>([\s\S]*?)<\/head>/i)?.[1] || '';
+
+    const requestedIds = Array.isArray(ids)
+      ? ids.map((id) => String(id).trim()).filter(Boolean)
+      : [];
+
+    const payloadUsers = Array.isArray(usuarios) ? usuarios : [];
+    const usersByRut = new Map(
+      payloadUsers
+        .filter((user) => user && user.rut)
+        .map((user) => [String(user.rut), user])
+    );
+
+    const usersFromPayload = requestedIds.length > 0
+      ? requestedIds.map((rut) => usersByRut.get(rut)).filter(Boolean)
+      : payloadUsers;
+
+    let usersForDocument = usersFromPayload;
+
+    if (usersForDocument.length === 0 && requestedIds.length > 0) {
+      const dbUsers = await pool.query(
+        'SELECT rut, nombre, apellido, edad FROM usuarios WHERE rut = ANY($1::text[]) ORDER BY rut',
+        [requestedIds]
+      );
+      usersForDocument = dbUsers.rows;
+    }
+
+    if (usersForDocument.length === 0) {
+      return res.status(400).json({ error: 'No hay usuarios válidos para generar el documento.' });
+    }
+
+    const docPages = usersForDocument
+      .map((user, index) => {
+        const page = buildUserPageFromTemplate(bodyContent, user, meta, decisiones);
+        const pageBreak = index < usersForDocument.length - 1 ? ' style="page-break-after:always;"' : '';
+        return `<div${pageBreak}>${page}</div>`;
+      })
+      .join('\n');
+
+    const finalHtml = `<!DOCTYPE html>
+<html>
+  <head>
+    ${headContent}
+    ${styleTag}
+  </head>
+  <body class="c17 doc-content">${docPages}</body>
+</html>`;
+
+    const docxBuffer = await HTMLtoDOCX(finalHtml, null, {
+      table: { row: { cantSplit: true } },
+      footer: false,
+      pageNumber: false,
+    });
+
+    const safeDate = new Date().toISOString().slice(0, 10);
+    const filename = `PCI-${safeDate}.docx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(Buffer.from(docxBuffer));
+  } catch (err) {
+    console.error('Error generando Word:', err);
     res.status(500).json({ error: err.message });
   }
 });
