@@ -3,7 +3,7 @@ import { pool } from '../db.js';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import HTMLtoDOCX from 'html-to-docx';
+import JSZip from 'jszip';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -80,6 +80,81 @@ const buildUserPageFromTemplate = (templateBody, user = {}, meta = '', decisione
   page = replaceDecisionRows(page, decisiones);
 
   return page;
+};
+
+const xmlEscape = (value) => String(value == null ? '' : value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&apos;');
+
+const regexEscape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildDocxParagraphXml = (value) => {
+  const text = xmlEscape(value).trim();
+  return [
+    '<w:p>',
+    '<w:pPr><w:keepNext w:val="0"/><w:keepLines w:val="0"/><w:pageBreakBefore w:val="0"/><w:widowControl w:val="0"/><w:pBdr><w:top w:space="0" w:sz="0" w:val="nil"/><w:left w:space="0" w:sz="0" w:val="nil"/><w:bottom w:space="0" w:sz="0" w:val="nil"/><w:right w:space="0" w:sz="0" w:val="nil"/><w:between w:space="0" w:sz="0" w:val="nil"/></w:pBdr><w:shd w:fill="auto" w:val="clear"/><w:spacing w:after="0" w:before="0" w:line="276" w:lineRule="auto"/><w:ind w:left="0" w:right="0" w:firstLine="0"/><w:jc w:val="left"/><w:rPr><w:rFonts w:ascii="Candara" w:cs="Candara" w:eastAsia="Candara" w:hAnsi="Candara"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:pPr>',
+    `<w:r><w:rPr><w:rFonts w:ascii="Candara" w:cs="Candara" w:eastAsia="Candara" w:hAnsi="Candara"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr><w:t xml:space="preserve">${text}</w:t></w:r>`,
+    '</w:p>',
+  ].join('');
+};
+
+const replaceDocxCellAfterLabel = (xml, label, value) => {
+  const labelEscaped = regexEscape(label);
+  const pattern = new RegExp(
+    `(<w:t[^>]*>${labelEscaped}<\\/w:t>[\\s\\S]*?<\\/w:tc>\\s*<w:tc>\\s*<w:tcPr[\\s\\S]*?<\\/w:tcPr>)[\\s\\S]*?(<\\/w:tc>)`
+  );
+  return xml.replace(pattern, `$1${buildDocxParagraphXml(value)}$2`);
+};
+
+const replaceAgeInDocx = (xml, age) => xml.replace(
+  /<w:t[^>]*>Edad:\s*[^<]*<\/w:t>/,
+  `<w:t xml:space="preserve">Edad: ${xmlEscape(age)}</w:t>`
+);
+
+const replaceDecisionsInDocx = (xml, decisiones = []) => {
+  const tablePattern = /(<w:tr>[\s\S]*?<w:t[^>]*>DIMENSIÓN<\/w:t>[\s\S]*?<w:t[^>]*>EVALUACIÓN<\/w:t>[\s\S]*?<\/w:tr>)([\s\S]*?)(<\/w:tbl>)/;
+  const tableMatch = xml.match(tablePattern);
+  if (!tableMatch) return xml;
+
+  const headerRow = tableMatch[1];
+  const existingRows = tableMatch[2];
+  const firstRowTemplate = existingRows.match(/<w:tr>[\s\S]*?<\/w:tr>/)?.[0];
+
+  if (!firstRowTemplate) return xml;
+
+  const trPr = firstRowTemplate.match(/<w:trPr[\s\S]*?<\/w:trPr>/)?.[0] || '';
+  const tcTemplates = firstRowTemplate.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || [];
+  if (tcTemplates.length < 7) return xml;
+
+  const normalized = Array.isArray(decisiones) ? decisiones : [];
+  const rowsToRender = normalized.length > 0 ? normalized : [{}];
+
+  const rowXml = rowsToRender.map((d) => {
+    const values = [d.dimension, d.objetivo, d.estrategia, d.indicador, d.plazo, d.responsable, d.evaluacion];
+    const renderedCells = tcTemplates.slice(0, 7).map((tc, idx) => tc.replace(
+      /(<w:tc>\s*<w:tcPr[\s\S]*?<\/w:tcPr>)[\s\S]*?(<\/w:tc>)/,
+      `$1${buildDocxParagraphXml(values[idx] || '')}$2`
+    )).join('');
+    return `<w:tr>${trPr}${renderedCells}</w:tr>`;
+  }).join('');
+
+  return xml.replace(tablePattern, `${headerRow}${rowXml}$3`);
+};
+
+const fillDocxPageXml = (pageXml, user = {}, meta = '', decisiones = []) => {
+  const fullName = [user.nombre, user.apellido].filter(Boolean).join(' ').trim();
+
+  let updated = pageXml;
+  updated = replaceDocxCellAfterLabel(updated, 'Nombre:', fullName || user.nombre || '');
+  updated = replaceDocxCellAfterLabel(updated, 'RUT:', user.rut || '');
+  updated = replaceAgeInDocx(updated, user.edad || '');
+  updated = replaceDocxCellAfterLabel(updated, 'META:', meta || '');
+  updated = replaceDecisionsInDocx(updated, decisiones);
+
+  return updated;
 };
 
 const loadPciTemplateHtml = () => {
@@ -267,15 +342,15 @@ router.post('/word', async (req, res) => {
   try {
     const { ids = [], meta = '', usuarios = [], decisiones = [] } = req.body || {};
 
-    const templateHtml = loadPciTemplateHtml();
-    if (!templateHtml) {
-      return res.status(500).json({ error: 'No se encontró el template PCI para generar el documento.' });
-    }
+    const docxTemplateCandidates = [
+      join(process.cwd(), 'PCI - 22_07_2026.docx'),
+      join(__dirname, '..', 'PCI - 22_07_2026.docx'),
+    ];
+    const docxTemplatePath = docxTemplateCandidates.find((p) => existsSync(p));
 
-    const bodyMatch = templateHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-    const bodyContent = bodyMatch ? bodyMatch[1] : '';
-    const styleTag = templateHtml.match(/<style[^>]*>[\s\S]*?<\/style>/i)?.[0] || '';
-    const headContent = templateHtml.match(/<head>([\s\S]*?)<\/head>/i)?.[1] || '';
+    if (!docxTemplatePath) {
+      return res.status(500).json({ error: 'No se encontró el archivo PCI - 22_07_2026.docx en el proyecto.' });
+    }
 
     const requestedIds = Array.isArray(ids)
       ? ids.map((id) => String(id).trim()).filter(Boolean)
@@ -306,28 +381,30 @@ router.post('/word', async (req, res) => {
       return res.status(400).json({ error: 'No hay usuarios válidos para generar el documento.' });
     }
 
-    const docPages = usersForDocument
-      .map((user, index) => {
-        const page = buildUserPageFromTemplate(bodyContent, user, meta, decisiones);
-        const pageBreak = index < usersForDocument.length - 1 ? ' style="page-break-after:always;"' : '';
-        return `<div${pageBreak}>${page}</div>`;
-      })
-      .join('\n');
+    const templateBuffer = readFileSync(docxTemplatePath);
+    const zip = await JSZip.loadAsync(templateBuffer);
+    const documentXmlOriginal = await zip.file('word/document.xml').async('string');
 
-    const finalHtml = `<!DOCTYPE html>
-<html>
-  <head>
-    ${headContent}
-    ${styleTag}
-  </head>
-  <body class="c17 doc-content">${docPages}</body>
-</html>`;
+    const bodyMatch = documentXmlOriginal.match(/<w:body>([\s\S]*?)(<w:sectPr[\s\S]*?<\/w:sectPr>)\s*<\/w:body>/);
+    if (!bodyMatch) {
+      return res.status(500).json({ error: 'No se pudo interpretar el cuerpo del template DOCX.' });
+    }
 
-    const docxBuffer = await HTMLtoDOCX(finalHtml, null, {
-      table: { row: { cantSplit: true } },
-      footer: false,
-      pageNumber: false,
-    });
+    const pageTemplateXml = bodyMatch[1];
+    const sectionXml = bodyMatch[2];
+    const pageBreakXml = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+
+    const pagesXml = usersForDocument
+      .map((user) => fillDocxPageXml(pageTemplateXml, user, meta, decisiones))
+      .join(pageBreakXml);
+
+    const documentXmlUpdated = documentXmlOriginal.replace(
+      /<w:body>[\s\S]*?<\/w:body>/,
+      `<w:body>${pagesXml}${sectionXml}</w:body>`
+    );
+
+    zip.file('word/document.xml', documentXmlUpdated);
+    const docxBuffer = await zip.generateAsync({ type: 'nodebuffer' });
 
     const safeDate = new Date().toISOString().slice(0, 10);
     const filename = `PCI-${safeDate}.docx`;
