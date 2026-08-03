@@ -157,18 +157,18 @@ const replaceAgeInDocx = (xml, age) => xml.replace(
 );
 
 const replaceDecisionsInDocx = (xml, decisiones = []) => {
-  const tablePattern = /(<w:tr>[\s\S]*?<w:t[^>]*>DIMENSIÓN<\/w:t>[\s\S]*?<w:t[^>]*>EVALUACIÓN<\/w:t>[\s\S]*?<\/w:tr>)([\s\S]*?)(<\/w:tbl>)/;
+  const tablePattern = /(<w:tr\b[^>]*>[\s\S]*?<w:t[^>]*>DIMENSI(?:Ó|O)N<\/w:t>[\s\S]*?<w:t[^>]*>EVALUACI(?:Ó|O)N<\/w:t>[\s\S]*?<\/w:tr>)([\s\S]*?)(<\/w:tbl>)/;
   const tableMatch = xml.match(tablePattern);
   if (!tableMatch) return xml;
 
   const headerRow = tableMatch[1];
   const existingRows = tableMatch[2];
-  const firstRowTemplate = existingRows.match(/<w:tr>[\s\S]*?<\/w:tr>/)?.[0];
+  const firstRowTemplate = existingRows.match(/<w:tr\b[^>]*>[\s\S]*?<\/w:tr>/)?.[0];
 
   if (!firstRowTemplate) return xml;
 
   const trPr = firstRowTemplate.match(/<w:trPr[\s\S]*?<\/w:trPr>/)?.[0] || '';
-  const tcTemplates = firstRowTemplate.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || [];
+  const tcTemplates = firstRowTemplate.match(/<w:tc\b[^>]*>[\s\S]*?<\/w:tc>/g) || [];
   if (tcTemplates.length < 7) return xml;
 
   const normalized = Array.isArray(decisiones) ? decisiones : [];
@@ -177,7 +177,7 @@ const replaceDecisionsInDocx = (xml, decisiones = []) => {
   const rowXml = rowsToRender.map((d) => {
     const values = [d.dimension, d.objetivo, d.estrategia, d.indicador, d.plazo, d.responsable, d.evaluacion];
     const renderedCells = tcTemplates.slice(0, 7).map((tc, idx) => tc.replace(
-      /(<w:tc>\s*<w:tcPr[\s\S]*?<\/w:tcPr>)[\s\S]*?(<\/w:tc>)/,
+      /(<w:tc\b[^>]*>\s*<w:tcPr[\s\S]*?<\/w:tcPr>)[\s\S]*?(<\/w:tc>)/,
       `$1${buildDocxParagraphXml(values[idx] || '')}$2`
     )).join('');
     return `<w:tr>${trPr}${renderedCells}</w:tr>`;
