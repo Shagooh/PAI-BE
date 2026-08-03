@@ -89,6 +89,48 @@ const xmlEscape = (value) => String(value == null ? '' : value)
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&apos;');
 
+const toCleanString = (value) => value == null ? '' : String(value).trim();
+
+const normalizeRutKey = (rut) => toCleanString(rut).replace(/[^0-9kK]/g, '').toUpperCase();
+
+const normalizeDecision = (decision = {}) => ({
+  dimension: toCleanString(decision.dimension ?? decision.dimensionNombre ?? decision['dimensión']),
+  objetivo: toCleanString(decision.objetivo),
+  estrategia: toCleanString(decision.estrategia),
+  indicador: toCleanString(decision.indicador),
+  plazo: toCleanString(decision.plazo),
+  responsable: toCleanString(decision.responsable),
+  evaluacion: toCleanString(decision.evaluacion ?? decision['evaluación']),
+});
+
+const normalizeUser = (user = {}) => ({
+  rut: toCleanString(user.rut ?? user.id ?? user.rut_usuario),
+  nombre: toCleanString(user.nombre ?? user.nombres),
+  apellido: toCleanString(user.apellido ?? user.apellidos),
+  edad: user.edad == null ? '' : toCleanString(user.edad),
+});
+
+const normalizeWordPayload = (payload = {}) => {
+  const ids = Array.isArray(payload.ids)
+    ? payload.ids.map((id) => toCleanString(id)).filter(Boolean)
+    : [];
+
+  const usuarios = Array.isArray(payload.usuarios)
+    ? payload.usuarios.map((user) => normalizeUser(user)).filter((user) => user.rut)
+    : [];
+
+  const decisiones = Array.isArray(payload.decisiones)
+    ? payload.decisiones.map((decision) => normalizeDecision(decision))
+    : [];
+
+  return {
+    ids,
+    meta: toCleanString(payload.meta),
+    usuarios,
+    decisiones,
+  };
+};
+
 const regexEscape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const buildDocxParagraphXml = (value) => {
@@ -340,7 +382,7 @@ router.get('/:rut', async (req, res) => {
 
 router.post('/word', async (req, res) => {
   try {
-    const { ids = [], meta = '', usuarios = [], decisiones = [] } = req.body || {};
+    const { ids, meta, usuarios, decisiones } = normalizeWordPayload(req.body || {});
 
     const docxTemplateCandidates = [
       join(process.cwd(), 'Template_word_PCI.docx'),
@@ -352,19 +394,17 @@ router.post('/word', async (req, res) => {
       return res.status(500).json({ error: 'No se encontró el template de Word (Template_word_PCI.docx) en el proyecto.' });
     }
 
-    const requestedIds = Array.isArray(ids)
-      ? ids.map((id) => String(id).trim()).filter(Boolean)
-      : [];
+    const requestedIds = ids;
 
-    const payloadUsers = Array.isArray(usuarios) ? usuarios : [];
+    const payloadUsers = usuarios;
     const usersByRut = new Map(
       payloadUsers
         .filter((user) => user && user.rut)
-        .map((user) => [String(user.rut), user])
+        .map((user) => [normalizeRutKey(user.rut), user])
     );
 
     const usersFromPayload = requestedIds.length > 0
-      ? requestedIds.map((rut) => usersByRut.get(rut)).filter(Boolean)
+      ? requestedIds.map((rut) => usersByRut.get(normalizeRutKey(rut))).filter(Boolean)
       : payloadUsers;
 
     let usersForDocument = usersFromPayload;
