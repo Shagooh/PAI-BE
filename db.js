@@ -36,11 +36,26 @@ const initDB = async () => {
         nombre VARCHAR(100) NOT NULL,
         apellido VARCHAR(100) NOT NULL,
         edad INT NOT NULL,
-        descripcion VARCHAR(50) GENERATED ALWAYS AS (
-          CASE WHEN edad >= 18 THEN 'Mayor de edad' ELSE 'Menor de edad' END
-        ) STORED,
+        fecha_nacimiento DATE,
+        equipo_tratante VARCHAR(150),
+        estado_motivacional VARCHAR(120),
+        programa VARCHAR(150),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Keep existing databases in sync when table was created before these fields existed.
+    await client.query(`
+      ALTER TABLE usuarios
+      ADD COLUMN IF NOT EXISTS fecha_nacimiento DATE,
+      ADD COLUMN IF NOT EXISTS equipo_tratante VARCHAR(150),
+      ADD COLUMN IF NOT EXISTS estado_motivacional VARCHAR(120),
+      ADD COLUMN IF NOT EXISTS programa VARCHAR(150);
+    `);
+
+    await client.query(`
+      ALTER TABLE usuarios
+      DROP COLUMN IF EXISTS descripcion;
     `);
 
     await client.query(`
@@ -78,17 +93,17 @@ const initDB = async () => {
     const usersCount = await client.query('SELECT COUNT(*)::int AS count FROM usuarios');
     if (usersCount.rows[0].count === 0) {
       await client.query(`
-        INSERT INTO usuarios (rut, nombre, apellido, edad) VALUES
-        ('18.768.749-7', 'Lautaro', 'Garcia', 25),
-        ('19.123.456-5', 'Camila', 'Rodriguez', 17),
-        ('16.345.789-2', 'Mateo', 'Lopez', 32),
-        ('20.123.456-8', 'Valentina', 'Martinez', 15),
-        ('15.456.789-1', 'Santiago', 'Fernandez', 19),
-        ('12.345.678-9', 'Isabella', 'Gonzalez', 42),
-        ('22.567.890-4', 'Benjamin', 'Perez', 8),
-        ('9.876.543-2', 'Emilia', 'Sanchez', 55),
-        ('19.876.543-3', 'Facundo', 'Romero', 13),
-        ('17.654.321-0', 'Martina', 'Torres', 21);
+        INSERT INTO usuarios (rut, nombre, apellido, edad, fecha_nacimiento, equipo_tratante, estado_motivacional, programa) VALUES
+        ('18.768.749-7', 'Lautaro', 'Garcia', 25, '2001-06-12', 'Equipo A', 'Alto', 'Programa Integral'),
+        ('19.123.456-5', 'Camila', 'Rodriguez', 17, '2009-03-08', 'Equipo B', 'Medio', 'Programa Jovenes'),
+        ('16.345.789-2', 'Mateo', 'Lopez', 32, '1994-10-21', 'Equipo C', 'Alto', 'Programa Adultos'),
+        ('20.123.456-8', 'Valentina', 'Martinez', 15, '2011-01-30', 'Equipo A', 'Bajo', 'Programa Escolar'),
+        ('15.456.789-1', 'Santiago', 'Fernandez', 19, '2007-09-14', 'Equipo B', 'Medio', 'Programa Transicion'),
+        ('12.345.678-9', 'Isabella', 'Gonzalez', 42, '1984-05-02', 'Equipo C', 'Alto', 'Programa Familiar'),
+        ('22.567.890-4', 'Benjamin', 'Perez', 8, '2018-12-19', 'Equipo A', 'Medio', 'Programa Inicial'),
+        ('9.876.543-2', 'Emilia', 'Sanchez', 55, '1971-07-07', 'Equipo D', 'Alto', 'Programa Senior'),
+        ('19.876.543-3', 'Facundo', 'Romero', 13, '2013-04-25', 'Equipo B', 'Bajo', 'Programa Escolar'),
+        ('17.654.321-0', 'Martina', 'Torres', 21, '2005-11-11', 'Equipo C', 'Medio', 'Programa Insercion');
       `);
       console.log('Seed de 10 usuarios insertado');
     }

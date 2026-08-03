@@ -108,6 +108,10 @@ const normalizeUser = (user = {}) => ({
   nombre: toCleanString(user.nombre ?? user.nombres),
   apellido: toCleanString(user.apellido ?? user.apellidos),
   edad: user.edad == null ? '' : toCleanString(user.edad),
+  fecha_nacimiento: toCleanString(user.fecha_nacimiento),
+  equipo_tratante: toCleanString(user.equipo_tratante),
+  estado_motivacional: toCleanString(user.estado_motivacional),
+  programa: toCleanString(user.programa ?? user.progrma),
 });
 
 const normalizeWordPayload = (payload = {}) => {
@@ -411,7 +415,7 @@ router.post('/word', async (req, res) => {
 
     if (usersForDocument.length === 0 && requestedIds.length > 0) {
       const dbUsers = await pool.query(
-        'SELECT rut, nombre, apellido, edad FROM usuarios WHERE rut = ANY($1::text[]) ORDER BY rut',
+        'SELECT rut, nombre, apellido, edad, fecha_nacimiento, equipo_tratante, estado_motivacional, programa FROM usuarios WHERE rut = ANY($1::text[]) ORDER BY rut',
         [requestedIds]
       );
       usersForDocument = dbUsers.rows;
@@ -460,13 +464,26 @@ router.post('/word', async (req, res) => {
 
 router.post('/', async (req, res) => {
   try {
-    const { rut, nombre, apellido, edad } = req.body;
+    const {
+      rut,
+      nombre,
+      apellido,
+      edad,
+      fecha_nacimiento,
+      equipo_tratante,
+      estado_motivacional,
+      programa,
+      progrma,
+    } = req.body;
     if (!/^\d{1,2}\.\d{3}\.\d{3}-[\dKk]$/.test(rut)) {
       return res.status(400).json({ error: 'Formato de RUT inválido. Use xx.xxx.xxx-x' });
     }
+    const programaFinal = programa ?? progrma ?? null;
     const result = await pool.query(
-      'INSERT INTO usuarios (rut, nombre, apellido, edad) VALUES ($1, $2, $3, $4) RETURNING *',
-      [rut, nombre, apellido, edad]
+      `INSERT INTO usuarios (
+        rut, nombre, apellido, edad, fecha_nacimiento, equipo_tratante, estado_motivacional, programa
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [rut, nombre, apellido, edad, fecha_nacimiento || null, equipo_tratante || null, estado_motivacional || null, programaFinal]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -477,10 +494,38 @@ router.post('/', async (req, res) => {
 router.put('/:rut', async (req, res) => {
   try {
     const { rut } = req.params;
-    const { nombre, apellido, edad } = req.body;
+    const {
+      nombre,
+      apellido,
+      edad,
+      fecha_nacimiento,
+      equipo_tratante,
+      estado_motivacional,
+      programa,
+      progrma,
+    } = req.body;
+    const programaFinal = programa ?? progrma ?? null;
     const result = await pool.query(
-      'UPDATE usuarios SET nombre = $1, apellido = $2, edad = $3 WHERE rut = $4 RETURNING *',
-      [nombre, apellido, edad, rut]
+      `UPDATE usuarios
+       SET nombre = $1,
+           apellido = $2,
+           edad = $3,
+           fecha_nacimiento = $4,
+           equipo_tratante = $5,
+           estado_motivacional = $6,
+           programa = $7
+       WHERE rut = $8
+       RETURNING *`,
+      [
+        nombre,
+        apellido,
+        edad,
+        fecha_nacimiento || null,
+        equipo_tratante || null,
+        estado_motivacional || null,
+        programaFinal,
+        rut,
+      ]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
     res.json(result.rows[0]);
