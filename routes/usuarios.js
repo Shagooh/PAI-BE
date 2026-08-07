@@ -93,6 +93,56 @@ const toCleanString = (value) => value == null ? '' : String(value).trim();
 
 const normalizeRutKey = (rut) => toCleanString(rut).replace(/[^0-9kK]/g, '').toUpperCase();
 
+const birthDateRegex = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+
+const toDatabaseBirthDate = (value) => {
+  const clean = toCleanString(value);
+  if (!clean) return null;
+
+  const match = clean.match(birthDateRegex);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+const formatBirthDate = (value) => {
+  if (!value) return '';
+
+  const str = String(value);
+  const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[3]}/${isoMatch[2]}/${isoMatch[1]}`;
+  }
+
+  const parsed = new Date(str);
+  if (Number.isNaN(parsed.getTime())) {
+    return str;
+  }
+
+  const day = String(parsed.getUTCDate()).padStart(2, '0');
+  const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+  const year = String(parsed.getUTCFullYear()).padStart(4, '0');
+  return `${day}/${month}/${year}`;
+};
+
+const formatUserBirthDate = (user = {}) => ({
+  ...user,
+  fecha_nacimiento: formatBirthDate(user.fecha_nacimiento),
+});
+
 const normalizeDecision = (decision = {}) => ({
   dimension: toCleanString(decision.dimension ?? decision.dimensionNombre ?? decision['dimensión']),
   objetivo: toCleanString(decision.objetivo),
@@ -263,7 +313,7 @@ router.get('/', async (req, res) => {
     }
     query += ` ORDER BY u.rut`;
     const result = await pool.query(query, params);
-    res.json(result.rows);
+    res.json(result.rows.map(formatUserBirthDate));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -378,7 +428,7 @@ router.get('/:rut', async (req, res) => {
     const { rut } = req.params;
     const result = await pool.query('SELECT * FROM usuarios WHERE rut = $1', [rut]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json(result.rows[0]);
+    res.json(formatUserBirthDate(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -478,14 +528,18 @@ router.post('/', async (req, res) => {
     if (!/^\d{1,2}\.\d{3}\.\d{3}-[\dKk]$/.test(rut)) {
       return res.status(400).json({ error: 'Formato de RUT inválido. Use xx.xxx.xxx-x' });
     }
+    const fechaNacimientoDb = toDatabaseBirthDate(fecha_nacimiento);
+    if (fecha_nacimiento && !fechaNacimientoDb) {
+      return res.status(400).json({ error: 'Formato de fecha_nacimiento inválido. Use dd/mm/yyyy.' });
+    }
     const programaFinal = programa ?? progrma ?? null;
     const result = await pool.query(
       `INSERT INTO usuarios (
         rut, nombre, apellido, edad, fecha_nacimiento, equipo_tratante, estado_motivacional, programa
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [rut, nombre, apellido, edad, fecha_nacimiento || null, equipo_tratante || null, estado_motivacional || null, programaFinal]
+      [rut, nombre, apellido, edad, fechaNacimientoDb, equipo_tratante || null, estado_motivacional || null, programaFinal]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(formatUserBirthDate(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -504,6 +558,10 @@ router.put('/:rut', async (req, res) => {
       programa,
       progrma,
     } = req.body;
+    const fechaNacimientoDb = toDatabaseBirthDate(fecha_nacimiento);
+    if (fecha_nacimiento && !fechaNacimientoDb) {
+      return res.status(400).json({ error: 'Formato de fecha_nacimiento inválido. Use dd/mm/yyyy.' });
+    }
     const programaFinal = programa ?? progrma ?? null;
     const result = await pool.query(
       `UPDATE usuarios
@@ -520,7 +578,7 @@ router.put('/:rut', async (req, res) => {
         nombre,
         apellido,
         edad,
-        fecha_nacimiento || null,
+        fechaNacimientoDb,
         equipo_tratante || null,
         estado_motivacional || null,
         programaFinal,
@@ -528,7 +586,7 @@ router.put('/:rut', async (req, res) => {
       ]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
-    res.json(result.rows[0]);
+    res.json(formatUserBirthDate(result.rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
