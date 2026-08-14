@@ -79,6 +79,15 @@ const initDB = async () => {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS fichas (
+        rut VARCHAR(12) PRIMARY KEY REFERENCES usuarios(rut) ON DELETE CASCADE,
+        meta TEXT,
+        decisiones JSONB NOT NULL DEFAULT '[]'::jsonb,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     const habCount = await client.query('SELECT COUNT(*)::int AS count FROM habilitaciones');
     if (habCount.rows[0].count === 0) {
       await client.query(`

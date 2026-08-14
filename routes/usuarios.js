@@ -162,6 +162,10 @@ const normalizeUser = (user = {}) => ({
   equipo_tratante: toCleanString(user.equipo_tratante),
   estado_motivacional: toCleanString(user.estado_motivacional),
   programa: toCleanString(user.programa ?? user.progrma),
+  meta: toCleanString(user.meta),
+  decisiones: Array.isArray(user.decisiones)
+    ? user.decisiones.map((decision) => normalizeDecision(decision))
+    : [],
 });
 
 const normalizeWordPayload = (payload = {}) => {
@@ -302,9 +306,11 @@ router.get('/', async (req, res) => {
   try {
     const { search } = req.query;
     let query = `
-      SELECT u.*, h.nombre AS decision_nombre, h.resultado AS habilitado
+      SELECT u.*, h.nombre AS decision_nombre, h.resultado AS habilitado,
+             f.meta, f.decisiones
       FROM usuarios u
       LEFT JOIN habilitaciones h ON u.edad BETWEEN h.edad_min AND h.edad_max
+      LEFT JOIN fichas f ON f.rut = u.rut
     `;
     let params = [];
     if (search) {
@@ -323,9 +329,11 @@ router.get('/preview', async (req, res) => {
   try {
     const { ids } = req.query;
     let userQuery = `
-      SELECT u.*, h.nombre AS decision_nombre, h.resultado AS habilitado
+      SELECT u.*, h.nombre AS decision_nombre, h.resultado AS habilitado,
+             f.meta, f.decisiones
       FROM usuarios u
       LEFT JOIN habilitaciones h ON u.edad BETWEEN h.edad_min AND h.edad_max
+      LEFT JOIN fichas f ON f.rut = u.rut
     `;
     let params = [];
     if (ids) {
@@ -434,6 +442,51 @@ router.get('/:rut', async (req, res) => {
   }
 });
 
+router.get('/:rut/ficha', async (req, res) => {
+  try {
+    const { rut } = req.params;
+    const result = await pool.query(
+      'SELECT rut, meta, decisiones, updated_at FROM fichas WHERE rut = $1',
+      [rut]
+    );
+    if (result.rows.length === 0) return res.json(null);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/:rut/ficha', async (req, res) => {
+  try {
+    const { rut } = req.params;
+    const { meta, decisiones } = req.body || {};
+
+    const userResult = await pool.query('SELECT rut FROM usuarios WHERE rut = $1', [rut]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const normalizedDecisiones = Array.isArray(decisiones)
+      ? decisiones.map((decision) => normalizeDecision(decision))
+      : [];
+
+    const result = await pool.query(
+      `INSERT INTO fichas (rut, meta, decisiones, updated_at)
+       VALUES ($1, $2, $3::jsonb, CURRENT_TIMESTAMP)
+       ON CONFLICT (rut) DO UPDATE SET
+         meta = EXCLUDED.meta,
+         decisiones = EXCLUDED.decisiones,
+         updated_at = CURRENT_TIMESTAMP
+       RETURNING rut, meta, decisiones, updated_at`,
+      [rut, toCleanString(meta), JSON.stringify(normalizedDecisiones)]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/word', async (req, res) => {
   try {
     const { ids, meta, usuarios, decisiones } = normalizeWordPayload(req.body || {});
@@ -489,7 +542,13 @@ router.post('/word', async (req, res) => {
     const pageBreakXml = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
 
     const pagesXml = usersForDocument
-      .map((user) => fillDocxPageXml(pageTemplateXml, user, meta, decisiones))
+      .map((user) => {
+        const userMeta = user.meta ?? meta;
+        const userDecisiones = Array.isArray(user.decisiones) && user.decisiones.length > 0
+          ? user.decisiones
+          : decisiones;
+        return fillDocxPageXml(pageTemplateXml, user, userMeta, userDecisiones);
+      })
       .join(pageBreakXml);
 
     const documentXmlUpdated = documentXmlOriginal.replace(
