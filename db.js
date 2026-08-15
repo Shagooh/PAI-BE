@@ -88,6 +88,26 @@ const initDB = async () => {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS "NewUsers" (
+        "Situación" TEXT,
+        "FECHA DE INGRESO" TEXT,
+        "RUT" TEXT,
+        "NOMBRE Y APELLIDOS" TEXT,
+        "CONVENIO SENDA" TEXT,
+        "FECHA TENTATIVA EV IN" TEXT,
+        "GESTOR" TEXT,
+        "FECHA EV INTEGRAL" TEXT,
+        "FECHA ÚLTIMO PCI" TEXT,
+        "TIEMPO PCI" TEXT,
+        "FECHA PRÓXIMO PCI" TEXT,
+        "TIEMPO PCI_1" TEXT,
+        "FECHA PRÓXIMO PCI_1" TEXT,
+        "TIEMPO PCI_2" TEXT,
+        "FECHA PRÓXIMO PCI_2" TEXT
+      );
+    `);
+
     const habCount = await client.query('SELECT COUNT(*)::int AS count FROM habilitaciones');
     if (habCount.rows[0].count === 0) {
       await client.query(`
