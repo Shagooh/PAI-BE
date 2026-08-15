@@ -461,7 +461,10 @@ router.put('/:rut/ficha', async (req, res) => {
     const { rut } = req.params;
     const { meta, decisiones } = req.body || {};
 
-    const userResult = await pool.query('SELECT rut FROM usuarios WHERE rut = $1', [rut]);
+    const userResult = await pool.query(
+      'SELECT "RUT" FROM public."NewUsers" WHERE regexp_replace("RUT", \'[^0-9Kk]\', \'\', \'g\') = $1',
+      [normalizeRutKey(rut)]
+    );
     if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
@@ -518,10 +521,15 @@ router.post('/word', async (req, res) => {
 
     if (usersForDocument.length === 0 && requestedIds.length > 0) {
       const dbUsers = await pool.query(
-        'SELECT rut, nombre, apellido, edad, fecha_nacimiento, equipo_tratante, estado_motivacional, programa FROM usuarios WHERE rut = ANY($1::text[]) ORDER BY rut',
+        'SELECT "RUT", "NOMBRE Y APELLIDOS" FROM public."NewUsers" WHERE "RUT" = ANY($1::text[]) ORDER BY "RUT"',
         [requestedIds]
       );
-      usersForDocument = dbUsers.rows;
+      usersForDocument = dbUsers.rows.map((row) => ({
+        rut: row['RUT'],
+        nombre: row['NOMBRE Y APELLIDOS'],
+        apellido: '',
+        edad: '',
+      }));
     }
 
     if (usersForDocument.length === 0) {
