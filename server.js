@@ -4,6 +4,7 @@ import { initDB } from './db.js';
 import usuariosRouter from './routes/usuarios.js';
 import habilitacionesRouter from './routes/habilitaciones.js';
 import newUsersRouter from './routes/newUsers.js';
+import dimensionesRouter from './routes/dimensiones.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,6 +15,7 @@ app.use(express.json());
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/habilitaciones', habilitacionesRouter);
 app.use('/api/new-users', newUsersRouter);
+app.use('/api/dimensiones', dimensionesRouter);
 
 app.listen(PORT, async () => {
   try {

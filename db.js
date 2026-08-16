@@ -89,6 +89,32 @@ const initDB = async () => {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS dimensiones (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL UNIQUE,
+        orden INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS objetivos (
+        id SERIAL PRIMARY KEY,
+        dimension_id INTEGER NOT NULL REFERENCES dimensiones(id) ON DELETE CASCADE,
+        texto TEXT NOT NULL,
+        orden INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS opciones (
+        id SERIAL PRIMARY KEY,
+        objetivo_id INTEGER NOT NULL REFERENCES objetivos(id) ON DELETE CASCADE,
+        estrategias JSONB NOT NULL DEFAULT '[]'::jsonb,
+        indicadores JSONB NOT NULL DEFAULT '[]'::jsonb
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS "NewUsers" (
         "Situación" TEXT,
         "FECHA DE INGRESO" TEXT,
